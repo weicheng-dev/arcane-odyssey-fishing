@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import keyboard
 import threading
+from PIL import ImageGrab, Image
 import sys
 import numpy as np
 import pyautogui
@@ -286,17 +287,29 @@ class FishingMacroGUI:
         """Create a draggable and resizable selection box"""
         box = tk.Toplevel(self.root)
         box.overrideredirect(True)  # Remove title bar
+        box.withdraw()  # Hide initially to prevent flash
+        
+        # Use saved area if available, otherwise use default center position
+        if self.notifier_area is not None:
+            x1, y1, x2, y2 = self.notifier_area
+            box_width = x2 - x1
+            box_height = y2 - y1
+            x = x1
+            y = y1
+        else:
+            # Default size and position (only for first time)
+            screen_width = box.winfo_screenwidth()
+            screen_height = box.winfo_screenheight()
+            box_width = 300
+            box_height = 200
+            x = (screen_width - box_width) // 2
+            y = (screen_height - box_height) // 2
+        
+        box.geometry(f"{box_width}x{box_height}+{x}+{y}")
+        
+        # Set attributes before showing
         box.attributes('-topmost', True)
         box.attributes('-alpha', 0.5)
-
-        # Default size and position
-        screen_width = box.winfo_screenwidth()
-        screen_height = box.winfo_screenheight()
-        box_width = 300
-        box_height = 200
-        x = (screen_width - box_width) // 2
-        y = (screen_height - box_height) // 2
-        box.geometry(f"{box_width}x{box_height}+{x}+{y}")
 
         # Configure the box appearance
         box.configure(bg='red', highlightthickness=2, highlightbackground='white')
@@ -343,39 +356,68 @@ class FishingMacroGUI:
             )
             handles[pos_name] = handle
 
-        # Variables for dragging and resizing
-        box._drag_data = {"x": 0, "y": 0, "mode": None}
+        # Variables for dragging and resizing - store in the box object itself
+        box._drag_data = {
+            "x": 0, 
+            "y": 0, 
+            "mode": None,
+            "start_x": 0,
+            "start_y": 0,
+            "start_width": 0,
+            "start_height": 0
+        }
 
         def start_drag(event):
+            """Start dragging the box"""
             box._drag_data["x"] = event.x_root
             box._drag_data["y"] = event.y_root
             box._drag_data["mode"] = "move"
+            # Store current position
+            box._drag_data["start_x"] = box.winfo_x()
+            box._drag_data["start_y"] = box.winfo_y()
 
         def on_drag(event):
+            """Handle dragging motion"""
             if box._drag_data["mode"] == "move":
+                # Calculate delta from start of drag
                 deltax = event.x_root - box._drag_data["x"]
                 deltay = event.y_root - box._drag_data["y"]
-                x = box.winfo_x() + deltax
-                y = box.winfo_y() + deltay
-                box.geometry(f"+{x}+{y}")
-                box._drag_data["x"] = event.x_root
-                box._drag_data["y"] = event.y_root
+                
+                # Calculate new position
+                new_x = box._drag_data["start_x"] + deltax
+                new_y = box._drag_data["start_y"] + deltay
+                
+                # Update geometry
+                box.geometry(f"+{new_x}+{new_y}")
+
+        def stop_drag(event):
+            """Stop dragging and reset mode"""
+            box._drag_data["mode"] = None
 
         def make_resize_handler(direction):
             def start_resize(event):
+                """Start resizing operation"""
                 box._drag_data["x"] = event.x_root
                 box._drag_data["y"] = event.y_root
                 box._drag_data["mode"] = f"resize_{direction}"
+                # Store initial dimensions
+                box._drag_data["start_x"] = box.winfo_x()
+                box._drag_data["start_y"] = box.winfo_y()
+                box._drag_data["start_width"] = box.winfo_width()
+                box._drag_data["start_height"] = box.winfo_height()
 
             def on_resize(event):
+                """Handle resizing motion"""
                 if box._drag_data["mode"] == f"resize_{direction}":
+                    # Calculate delta from start
                     deltax = event.x_root - box._drag_data["x"]
                     deltay = event.y_root - box._drag_data["y"]
 
-                    x = box.winfo_x()
-                    y = box.winfo_y()
-                    width = box.winfo_width()
-                    height = box.winfo_height()
+                    # Get initial values
+                    x = box._drag_data["start_x"]
+                    y = box._drag_data["start_y"]
+                    width = box._drag_data["start_width"]
+                    height = box._drag_data["start_height"]
 
                     # Handle each direction
                     if 'e' in direction:
@@ -389,31 +431,43 @@ class FishingMacroGUI:
                         height -= deltay
                         y += deltay
 
-                    # Minimum size
+                    # Minimum size constraints
                     if width < 100:
                         width = 100
                         if 'w' in direction:
-                            x = box.winfo_x()
+                            x = box._drag_data["start_x"] + box._drag_data["start_width"] - 100
+                    
                     if height < 50:
                         height = 50
                         if 'n' in direction:
-                            y = box.winfo_y()
+                            y = box._drag_data["start_y"] + box._drag_data["start_height"] - 50
 
+                    # Update geometry
                     box.geometry(f"{width}x{height}+{x}+{y}")
-                    box._drag_data["x"] = event.x_root
-                    box._drag_data["y"] = event.y_root
 
-            return start_resize, on_resize
+            def stop_resize(event):
+                """Stop resizing and reset mode"""
+                box._drag_data["mode"] = None
 
-        # Bind dragging to label
+            return start_resize, on_resize, stop_resize
+
+        # Bind dragging to label with release event
         label.bind("<ButtonPress-1>", start_drag)
         label.bind("<B1-Motion>", on_drag)
+        label.bind("<ButtonRelease-1>", stop_drag)
 
-        # Bind resize handlers to each handle
+        # Bind resize handlers to each handle with release event
         for direction, handle in handles.items():
-            start_resize, on_resize = make_resize_handler(direction)
+            start_resize, on_resize, stop_resize = make_resize_handler(direction)
             handle.bind("<ButtonPress-1>", start_resize)
             handle.bind("<B1-Motion>", on_resize)
+            handle.bind("<ButtonRelease-1>", stop_resize)
+
+        # Force update geometry before showing
+        box.update_idletasks()
+        
+        # Show the box smoothly
+        box.after(10, box.deiconify)  # Small delay before showing
 
         return box
 
@@ -571,51 +625,48 @@ class FishingMacroGUI:
                 # Step 4: Wait for notifier to appear
                 notifier_detected = False
 
-                # Use MSS for faster, flicker-free screenshots
-                with mss.mss() as sct:
-                    while self.monitoring and not notifier_detected:
-                        # Capture the notifier area (fast screenshot with mss)
-                        x1, y1, x2, y2 = self.notifier_area
-                        monitor = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
-                        screenshot = sct.grab(monitor)
-                        screenshot_np = np.array(screenshot)
+                while self.monitoring and not notifier_detected:
+                    # Capture the notifier area (fast screenshot)
+                    x1, y1, x2, y2 = self.notifier_area
+                    screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+                    screenshot_np = np.array(screenshot)
 
-                        # Fast pixel-based detection (mss returns BGRA format)
-                        # Looking for white box with red exclamation mark
-                        red_mask = (
-                            (screenshot_np[:, :, 2] > 150) &  # High red (BGR format)
-                            (screenshot_np[:, :, 1] < 100) &  # Low green
-                            (screenshot_np[:, :, 0] < 100)    # Low blue
-                        )
+                    # Fast pixel-based detection
+                    # Looking for white box with red exclamation mark
+                    red_mask = (
+                        (screenshot_np[:, :, 0] > 150) &  # High red
+                        (screenshot_np[:, :, 1] < 100) &  # Low green
+                        (screenshot_np[:, :, 2] < 100)    # Low blue
+                    )
 
-                        white_mask = (
-                            (screenshot_np[:, :, 2] > 200) &
-                            (screenshot_np[:, :, 1] > 200) &
-                            (screenshot_np[:, :, 0] > 200)
-                        )
+                    white_mask = (
+                        (screenshot_np[:, :, 0] > 200) &
+                        (screenshot_np[:, :, 1] > 200) &
+                        (screenshot_np[:, :, 2] > 200)
+                    )
 
-                        red_pixel_count = np.sum(red_mask)
-                        white_pixel_count = np.sum(white_mask)
+                    red_pixel_count = np.sum(red_mask)
+                    white_pixel_count = np.sum(white_mask)
 
-                        # If both red and white pixels detected (threshold: at least 50 red and 500 white)
-                        if red_pixel_count > 50 and white_pixel_count > 500:
-                            notifier_detected = True
+                    # If both red and white pixels detected (threshold: at least 50 red and 500 white)
+                    if red_pixel_count > 50 and white_pixel_count > 500:
+                        notifier_detected = True
 
-                            # Step 5: Spam click for 7 seconds at 0.1 second intervals
-                            start_time = time.time()
-                            while self.monitoring and (time.time() - start_time) < 7:
-                                pyautogui.click(self.fish_point[0], self.fish_point[1])
-                                time.sleep(0.1)
-
-                            # Step 6: Switch back to not rod slot
-                            keyboard.press_and_release(self.not_rod_slot.get())
-                            time.sleep(0.3)
-
-                            # Wait before starting next fishing cycle
-                            time.sleep(2)
-                        else:
-                            # Check every 0.1 seconds for faster detection
+                        # Step 5: Spam click for 7 seconds at 0.1 second intervals
+                        start_time = time.time()
+                        while self.monitoring and (time.time() - start_time) < 7:
+                            pyautogui.click(self.fish_point[0], self.fish_point[1])
                             time.sleep(0.1)
+
+                        # Step 6: Switch back to not rod slot
+                        keyboard.press_and_release(self.not_rod_slot.get())
+                        time.sleep(0.3)
+
+                        # Wait before starting next fishing cycle
+                        time.sleep(2)
+                    else:
+                        # Check every 0.1 seconds for faster detection
+                        time.sleep(0.1)
 
             except Exception as e:
                 print(f"Error in fishing process: {str(e)}")
