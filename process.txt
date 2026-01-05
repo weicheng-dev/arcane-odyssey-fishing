@@ -1,0 +1,5 @@
+1. Select rod
+2. Cast rod
+3. Wait for the notifier.png to show up
+4. spam click
+5. recast
