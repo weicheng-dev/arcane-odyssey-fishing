@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import keyboard
 import threading
-from PIL import ImageGrab, Image
 import sys
 import numpy as np
 import pyautogui
@@ -10,12 +9,13 @@ import time
 import json
 import os
 import mss
+import cv2
 
 class FishingMacroGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Arcane Odyssey Fishing Macro")
-        self.root.geometry("600x500")
+        self.root.title("Arcane Odyssey Fishing Macro - Made by @aauto1")
+        self.root.geometry("600x700")
         self.root.resizable(False, False)
 
         # Variables to store selected areas
@@ -36,8 +36,15 @@ class FishingMacroGUI:
         self.rod_slot = tk.StringVar(value="1")
         self.not_rod_slot = tk.StringVar(value="2")
 
+        # Spam click duration variable
+        self.spam_duration = tk.StringVar(value="7")
+
         # Settings file path
         self.settings_file = "AO-Settings.json"
+
+        # Load template image for detection
+        self.template_image = None
+        self.load_template_image()
 
         # Set up the UI
         self.setup_ui()
@@ -50,6 +57,26 @@ class FishingMacroGUI:
 
         # Register hotkeys (after UI is set up)
         self.register_hotkeys()
+
+    def load_template_image(self):
+        """Load the template image for notifier detection"""
+        # Get the correct path for bundled resources
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            base_path = sys._MEIPASS
+        else:
+            # Running as script
+            base_path = os.path.dirname(os.path.abspath(__file__))
+
+        template_path = os.path.join(base_path, "image.png")
+
+        if os.path.exists(template_path):
+            self.template_image = cv2.imread(template_path)
+            print(f"Template image loaded from {template_path}")
+        else:
+            print(f"Warning: Template image not found at {template_path}")
+            messagebox.showwarning("Template Missing",
+                                 f"Template image 'image.png' not found.\nPlease place the notifier image in the same folder as this script.")
 
     def center_window(self):
         self.root.update_idletasks()
@@ -217,6 +244,53 @@ class FishingMacroGUI:
             font=("Arial", 10)
         )
         not_rod_dropdown.pack(side="left", padx=5)
+
+        # Spam click duration frame
+        duration_frame = tk.LabelFrame(
+            self.root,
+            text="Spam Click Duration",
+            font=("Arial", 10, "bold"),
+            padx=10,
+            pady=10
+        )
+        duration_frame.pack(padx=20, pady=10, fill="x")
+
+        duration_label = tk.Label(
+            duration_frame,
+            text="Duration (seconds):",
+            font=("Arial", 10, "bold")
+        )
+        duration_label.pack(side="left", padx=5)
+
+        # Validate function to only allow integers
+        def validate_integer(value):
+            if value == "":
+                return True
+            try:
+                int(value)
+                return True
+            except ValueError:
+                return False
+
+        vcmd = (self.root.register(validate_integer), '%P')
+
+        duration_entry = tk.Entry(
+            duration_frame,
+            textvariable=self.spam_duration,
+            font=("Arial", 10),
+            width=10,
+            validate='key',
+            validatecommand=vcmd
+        )
+        duration_entry.pack(side="left", padx=5)
+
+        duration_info = tk.Label(
+            duration_frame,
+            text="(whole numbers only)",
+            font=("Arial", 9, "italic"),
+            fg="gray"
+        )
+        duration_info.pack(side="left", padx=5)
 
         # Message label for instructions
         self.message_label = tk.Label(
@@ -552,7 +626,8 @@ class FishingMacroGUI:
             "notifier_area": self.notifier_area,
             "fish_point": self.fish_point,
             "rod_slot": self.rod_slot.get(),
-            "not_rod_slot": self.not_rod_slot.get()
+            "not_rod_slot": self.not_rod_slot.get(),
+            "spam_duration": self.spam_duration.get()
         }
 
         try:
@@ -596,6 +671,10 @@ class FishingMacroGUI:
             if settings.get("not_rod_slot"):
                 self.not_rod_slot.set(settings["not_rod_slot"])
 
+            # Load spam duration
+            if settings.get("spam_duration"):
+                self.spam_duration.set(settings["spam_duration"])
+
             self.update_message("Settings loaded successfully!")
             print(f"Settings loaded from {self.settings_file}")
         except Exception as e:
@@ -604,74 +683,81 @@ class FishingMacroGUI:
 
     def fishing_process(self):
         """Main fishing process: switch slots, click fish point, wait for notifier, spam click"""
-        while self.monitoring:
-            try:
-                # Step 1: Select not rod slot
-                not_rod = self.not_rod_slot.get()
-                print(f"Pressing not rod slot: {not_rod}")
-                keyboard.press_and_release(not_rod)
-                time.sleep(0.3)
+        # Initialize mss once for better performance
+        with mss.mss() as sct:
+            while self.monitoring:
+                try:
+                    # Step 1: Select not rod slot
+                    not_rod = self.not_rod_slot.get()
+                    print(f"Pressing not rod slot: {not_rod}")
+                    keyboard.press_and_release(not_rod)
+                    time.sleep(0.3)
 
-                # Step 2: Select rod slot
-                rod = self.rod_slot.get()
-                print(f"Pressing rod slot: {rod}")
-                keyboard.press_and_release(rod)
-                time.sleep(0.3)
+                    # Step 2: Select rod slot
+                    rod = self.rod_slot.get()
+                    print(f"Pressing rod slot: {rod}")
+                    keyboard.press_and_release(rod)
+                    time.sleep(0.3)
 
-                # Step 3: Click the fish point to cast
-                pyautogui.click(self.fish_point[0], self.fish_point[1])
-                time.sleep(1)
+                    # Step 3: Click the fish point to cast
+                    pyautogui.click(self.fish_point[0], self.fish_point[1])
+                    time.sleep(1)
 
-                # Step 4: Wait for notifier to appear
-                notifier_detected = False
+                    # Step 4: Wait for notifier to appear
+                    notifier_detected = False
 
-                while self.monitoring and not notifier_detected:
-                    # Capture the notifier area (fast screenshot)
-                    x1, y1, x2, y2 = self.notifier_area
-                    screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-                    screenshot_np = np.array(screenshot)
+                    while self.monitoring and not notifier_detected:
+                        # Check if template image is loaded
+                        if self.template_image is None:
+                            print("Template image not loaded, skipping detection")
+                            time.sleep(1)
+                            continue
 
-                    # Fast pixel-based detection
-                    # Looking for white box with red exclamation mark
-                    red_mask = (
-                        (screenshot_np[:, :, 0] > 150) &  # High red
-                        (screenshot_np[:, :, 1] < 100) &  # Low green
-                        (screenshot_np[:, :, 2] < 100)    # Low blue
-                    )
+                        # Capture the notifier area using mss (much faster, no flicker)
+                        x1, y1, x2, y2 = self.notifier_area
+                        monitor = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
+                        screenshot = sct.grab(monitor)
+                        screenshot_np = np.array(screenshot)
 
-                    white_mask = (
-                        (screenshot_np[:, :, 0] > 200) &
-                        (screenshot_np[:, :, 1] > 200) &
-                        (screenshot_np[:, :, 2] > 200)
-                    )
+                        # Convert from BGRA to BGR (remove alpha channel)
+                        screenshot_bgr = cv2.cvtColor(screenshot_np, cv2.COLOR_BGRA2BGR)
 
-                    red_pixel_count = np.sum(red_mask)
-                    white_pixel_count = np.sum(white_mask)
+                        # Perform template matching
+                        result = cv2.matchTemplate(screenshot_bgr, self.template_image, cv2.TM_CCOEFF_NORMED)
+                        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
-                    # If both red and white pixels detected (threshold: at least 50 red and 500 white)
-                    if red_pixel_count > 50 and white_pixel_count > 500:
-                        notifier_detected = True
+                        # Check if confidence is 0.8 or above
+                        if max_val >= 0.8:
+                            notifier_detected = True
+                            print(f"Notifier detected with confidence: {max_val:.2f}")
 
-                        # Step 5: Spam click for 7 seconds at 0.1 second intervals
-                        start_time = time.time()
-                        while self.monitoring and (time.time() - start_time) < 7:
-                            pyautogui.click(self.fish_point[0], self.fish_point[1])
+                            # Step 5: Spam click for user-defined duration at 0.1 second intervals
+                            try:
+                                duration = int(self.spam_duration.get())
+                                if duration <= 0:
+                                    duration = 7  # Default to 7 if invalid
+                            except (ValueError, AttributeError):
+                                duration = 7  # Default to 7 if parsing fails
+
+                            start_time = time.time()
+                            while self.monitoring and (time.time() - start_time) < duration:
+                                pyautogui.click(self.fish_point[0], self.fish_point[1])
+                                time.sleep(0.1)
+
+                            # Step 6: Switch back to not rod slot
+                            keyboard.press_and_release(self.not_rod_slot.get())
+                            time.sleep(0.3)
+
+                            # Wait before starting next fishing cycle
+                            time.sleep(2)
+                        else:
+                            # Check every 0.1 seconds for faster detection
                             time.sleep(0.1)
 
-                        # Step 6: Switch back to not rod slot
-                        keyboard.press_and_release(self.not_rod_slot.get())
-                        time.sleep(0.3)
-
-                        # Wait before starting next fishing cycle
-                        time.sleep(2)
-                    else:
-                        # Check every 0.1 seconds for faster detection
-                        time.sleep(0.1)
-
-            except Exception as e:
-                print(f"Error in fishing process: {str(e)}")
-                self.update_message(f"Error: {str(e)}")
-                time.sleep(1)
+                except Exception as e:
+                    print(f"Error in fishing process: {str(e)}")
+                    self.update_message(f"Error: {str(e)}")
+                    time.sleep(1)
 
     def cleanup(self):
         """Clean up resources before closing"""

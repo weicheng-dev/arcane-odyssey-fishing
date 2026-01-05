@@ -4,7 +4,8 @@
       "Bash(pip install:*)",
       "Bash(python -m pip install:*)",
       "Bash(python:*)",
-      "Bash(pyinstaller:*)"
+      "Bash(pyinstaller:*)",
+      "Bash(dir:*)"
     ]
   }
 }

@@ -1,0 +1,6 @@
+keyboard
+numpy
+pyautogui
+mss
+opencv-python
+pyinstaller

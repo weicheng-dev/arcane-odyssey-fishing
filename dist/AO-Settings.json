@@ -1,14 +1,15 @@
 {
     "notifier_area": [
-        806,
-        303,
-        1106,
-        503
+        852,
+        379,
+        1057,
+        498
     ],
     "fish_point": [
-        961,
-        443
+        1015,
+        464
     ],
     "rod_slot": "2",
-    "not_rod_slot": "1"
+    "not_rod_slot": "1",
+    "spam_duration": "11"
 }
