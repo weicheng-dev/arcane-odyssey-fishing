@@ -2,13 +2,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import keyboard
 import threading
-from PIL import ImageGrab, Image
 import sys
 import numpy as np
 import pyautogui
 import time
 import json
 import os
+import mss
 
 class FishingMacroGUI:
     def __init__(self, root):
@@ -571,48 +571,51 @@ class FishingMacroGUI:
                 # Step 4: Wait for notifier to appear
                 notifier_detected = False
 
-                while self.monitoring and not notifier_detected:
-                    # Capture the notifier area (fast screenshot)
-                    x1, y1, x2, y2 = self.notifier_area
-                    screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-                    screenshot_np = np.array(screenshot)
+                # Use MSS for faster, flicker-free screenshots
+                with mss.mss() as sct:
+                    while self.monitoring and not notifier_detected:
+                        # Capture the notifier area (fast screenshot with mss)
+                        x1, y1, x2, y2 = self.notifier_area
+                        monitor = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
+                        screenshot = sct.grab(monitor)
+                        screenshot_np = np.array(screenshot)
 
-                    # Fast pixel-based detection
-                    # Looking for white box with red exclamation mark
-                    red_mask = (
-                        (screenshot_np[:, :, 0] > 150) &  # High red
-                        (screenshot_np[:, :, 1] < 100) &  # Low green
-                        (screenshot_np[:, :, 2] < 100)    # Low blue
-                    )
+                        # Fast pixel-based detection (mss returns BGRA format)
+                        # Looking for white box with red exclamation mark
+                        red_mask = (
+                            (screenshot_np[:, :, 2] > 150) &  # High red (BGR format)
+                            (screenshot_np[:, :, 1] < 100) &  # Low green
+                            (screenshot_np[:, :, 0] < 100)    # Low blue
+                        )
 
-                    white_mask = (
-                        (screenshot_np[:, :, 0] > 200) &
-                        (screenshot_np[:, :, 1] > 200) &
-                        (screenshot_np[:, :, 2] > 200)
-                    )
+                        white_mask = (
+                            (screenshot_np[:, :, 2] > 200) &
+                            (screenshot_np[:, :, 1] > 200) &
+                            (screenshot_np[:, :, 0] > 200)
+                        )
 
-                    red_pixel_count = np.sum(red_mask)
-                    white_pixel_count = np.sum(white_mask)
+                        red_pixel_count = np.sum(red_mask)
+                        white_pixel_count = np.sum(white_mask)
 
-                    # If both red and white pixels detected (threshold: at least 50 red and 500 white)
-                    if red_pixel_count > 50 and white_pixel_count > 500:
-                        notifier_detected = True
+                        # If both red and white pixels detected (threshold: at least 50 red and 500 white)
+                        if red_pixel_count > 50 and white_pixel_count > 500:
+                            notifier_detected = True
 
-                        # Step 5: Spam click for 7 seconds at 0.1 second intervals
-                        start_time = time.time()
-                        while self.monitoring and (time.time() - start_time) < 7:
-                            pyautogui.click(self.fish_point[0], self.fish_point[1])
+                            # Step 5: Spam click for 7 seconds at 0.1 second intervals
+                            start_time = time.time()
+                            while self.monitoring and (time.time() - start_time) < 7:
+                                pyautogui.click(self.fish_point[0], self.fish_point[1])
+                                time.sleep(0.1)
+
+                            # Step 6: Switch back to not rod slot
+                            keyboard.press_and_release(self.not_rod_slot.get())
+                            time.sleep(0.3)
+
+                            # Wait before starting next fishing cycle
+                            time.sleep(2)
+                        else:
+                            # Check every 0.1 seconds for faster detection
                             time.sleep(0.1)
-
-                        # Step 6: Switch back to not rod slot
-                        keyboard.press_and_release(self.not_rod_slot.get())
-                        time.sleep(0.3)
-
-                        # Wait before starting next fishing cycle
-                        time.sleep(2)
-                    else:
-                        # Check every 0.1 seconds for faster detection
-                        time.sleep(0.1)
 
             except Exception as e:
                 print(f"Error in fishing process: {str(e)}")
