@@ -9,7 +9,8 @@
         1138,
         484
     ],
-    "rod_slot": "2",
+    "rod_slot": "3",
     "not_rod_slot": "1",
-    "spam_duration": "4"
+    "spam_duration": "4",
+    "confidence_threshold": "0.8"
 }

@@ -6,7 +6,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('image.png', '.')],  # Include image.png in the exe
+    datas=[],  # No external data files needed (using color-based detection)
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

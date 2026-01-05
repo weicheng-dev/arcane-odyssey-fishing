@@ -39,12 +39,11 @@ class FishingMacroGUI:
         # Spam click duration variable
         self.spam_duration = tk.StringVar(value="7")
 
+        # Confidence threshold variable
+        self.confidence_threshold = tk.StringVar(value="0.8")
+
         # Settings file path
         self.settings_file = "AO-Settings.json"
-
-        # Load template image for detection
-        self.template_image = None
-        self.load_template_image()
 
         # Set up the UI
         self.setup_ui()
@@ -57,26 +56,6 @@ class FishingMacroGUI:
 
         # Register hotkeys (after UI is set up)
         self.register_hotkeys()
-
-    def load_template_image(self):
-        """Load the template image for notifier detection"""
-        # Get the correct path for bundled resources
-        if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            base_path = sys._MEIPASS
-        else:
-            # Running as script
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        template_path = os.path.join(base_path, "image.png")
-
-        if os.path.exists(template_path):
-            self.template_image = cv2.imread(template_path)
-            print(f"Template image loaded from {template_path}")
-        else:
-            print(f"Warning: Template image not found at {template_path}")
-            messagebox.showwarning("Template Missing",
-                                 f"Template image 'image.png' not found.\nPlease place the notifier image in the same folder as this script.")
 
     def center_window(self):
         self.root.update_idletasks()
@@ -291,6 +270,53 @@ class FishingMacroGUI:
             fg="gray"
         )
         duration_info.pack(side="left", padx=5)
+
+        # Confidence threshold frame
+        confidence_frame = tk.LabelFrame(
+            self.root,
+            text="Detection Confidence",
+            font=("Arial", 10, "bold"),
+            padx=10,
+            pady=10
+        )
+        confidence_frame.pack(padx=20, pady=10, fill="x")
+
+        confidence_label = tk.Label(
+            confidence_frame,
+            text="Threshold (0.0-1.0):",
+            font=("Arial", 10, "bold")
+        )
+        confidence_label.pack(side="left", padx=5)
+
+        # Validate function to only allow floats between 0 and 1
+        def validate_float(value):
+            if value == "" or value == ".":
+                return True
+            try:
+                float_val = float(value)
+                return 0 <= float_val <= 1
+            except ValueError:
+                return False
+
+        vcmd_float = (self.root.register(validate_float), '%P')
+
+        confidence_entry = tk.Entry(
+            confidence_frame,
+            textvariable=self.confidence_threshold,
+            font=("Arial", 10),
+            width=10,
+            validate='key',
+            validatecommand=vcmd_float
+        )
+        confidence_entry.pack(side="left", padx=5)
+
+        confidence_info = tk.Label(
+            confidence_frame,
+            text="(lower = more lenient, 0.8 recommended)",
+            font=("Arial", 9, "italic"),
+            fg="gray"
+        )
+        confidence_info.pack(side="left", padx=5)
 
         # Message label for instructions
         self.message_label = tk.Label(
@@ -627,7 +653,8 @@ class FishingMacroGUI:
             "fish_point": self.fish_point,
             "rod_slot": self.rod_slot.get(),
             "not_rod_slot": self.not_rod_slot.get(),
-            "spam_duration": self.spam_duration.get()
+            "spam_duration": self.spam_duration.get(),
+            "confidence_threshold": self.confidence_threshold.get()
         }
 
         try:
@@ -675,6 +702,10 @@ class FishingMacroGUI:
             if settings.get("spam_duration"):
                 self.spam_duration.set(settings["spam_duration"])
 
+            # Load confidence threshold
+            if settings.get("confidence_threshold"):
+                self.confidence_threshold.set(settings["confidence_threshold"])
+
             self.update_message("Settings loaded successfully!")
             print(f"Settings loaded from {self.settings_file}")
         except Exception as e:
@@ -707,12 +738,6 @@ class FishingMacroGUI:
                     notifier_detected = False
 
                     while self.monitoring and not notifier_detected:
-                        # Check if template image is loaded
-                        if self.template_image is None:
-                            print("Template image not loaded, skipping detection")
-                            time.sleep(1)
-                            continue
-
                         # Capture the notifier area using mss (much faster, no flicker)
                         x1, y1, x2, y2 = self.notifier_area
                         monitor = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
@@ -722,14 +747,64 @@ class FishingMacroGUI:
                         # Convert from BGRA to BGR (remove alpha channel)
                         screenshot_bgr = cv2.cvtColor(screenshot_np, cv2.COLOR_BGRA2BGR)
 
-                        # Perform template matching
-                        result = cv2.matchTemplate(screenshot_bgr, self.template_image, cv2.TM_CCOEFF_NORMED)
-                        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                        # Color-based detection for red and transparent white
+                        # Convert to HSV for better color detection
+                        hsv = cv2.cvtColor(screenshot_bgr, cv2.COLOR_BGR2HSV)
 
-                        # Check if confidence is 0.8 or above
-                        if max_val >= 0.8:
+                        # Red mask (hue wraps around, so we need two ranges)
+                        lower_red1 = np.array([0, 100, 100])
+                        upper_red1 = np.array([10, 255, 255])
+                        lower_red2 = np.array([160, 100, 100])
+                        upper_red2 = np.array([180, 255, 255])
+
+                        red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+                        red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+                        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+
+                        # White/light gray mask (for transparent white)
+                        # More lenient to catch semi-transparent whites
+                        lower_white = np.array([0, 0, 150])  # Low saturation, high value
+                        upper_white = np.array([180, 80, 255])  # Allows some color tint
+                        white_mask = cv2.inRange(hsv, lower_white, upper_white)
+
+                        # Alternative: detect light colors in BGR
+                        # This catches semi-transparent whites better
+                        light_mask = cv2.inRange(screenshot_bgr,
+                                                np.array([180, 180, 180]),  # BGR lower
+                                                np.array([255, 255, 255]))   # BGR upper
+
+                        # Combine white masks
+                        combined_white_mask = cv2.bitwise_or(white_mask, light_mask)
+
+                        # Count pixels
+                        red_pixel_count = np.sum(red_mask > 0)
+                        white_pixel_count = np.sum(combined_white_mask > 0)
+
+                        # Calculate detection confidence based on pixel counts
+                        # Normalize to 0-1 range based on expected pixel counts
+                        red_confidence = min(red_pixel_count / 50.0, 1.0)  # 50+ red pixels = max confidence
+                        white_confidence = min(white_pixel_count / 500.0, 1.0)  # 500+ white pixels = max confidence
+
+                        # Combined confidence (both need to be present)
+                        max_confidence = min(red_confidence, white_confidence)
+
+                        # Print confidence for debugging (every 20 iterations to avoid spam)
+                        import random
+                        if random.randint(1, 20) == 1:
+                            print(f"Detection - Red: {red_pixel_count}px ({red_confidence:.2f}), White: {white_pixel_count}px ({white_confidence:.2f}), Combined: {max_confidence:.2f}")
+
+                        # Get user-defined confidence threshold
+                        try:
+                            threshold = float(self.confidence_threshold.get())
+                            if threshold <= 0 or threshold > 1:
+                                threshold = 0.8
+                        except (ValueError, AttributeError):
+                            threshold = 0.8
+
+                        # Check if confidence meets threshold
+                        if max_confidence >= threshold:
                             notifier_detected = True
-                            print(f"Notifier detected with confidence: {max_val:.2f}")
+                            print(f"✓ Notifier detected with confidence: {max_confidence:.2f} (threshold: {threshold})")
 
                             # Step 5: Spam click for user-defined duration at 0.1 second intervals
                             try:
