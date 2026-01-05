@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PIL', 'Pillow', 'cv2', 'opencv', 'matplotlib', 'scipy', 'pandas', 'IPython', 'jupyter', 'setuptools', 'distutils'],
+    excludes=['matplotlib', 'scipy'],
     noarchive=False,
     optimize=0,
 )
